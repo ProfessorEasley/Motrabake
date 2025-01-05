@@ -1,0 +1,1181 @@
+/*
+
+Version 1.0 - UI started in Melanie
+
+NOTE: poseEditor.png is the icon I use for the shelf button.
+NOTE: Use the below as the shelf command:
+
+eval ("source \"" + `internalVar -usd` + "MotraBake.mel\"");
+
+v1.1
+10.10.2020 - 10.15.2020
+    Coded up basic useage using one kind of Mocap
+    Added universal functionality to allow multiple mocap inputs
+
+v1.2
+10.18.2020
+    Changed hardcoded 'Yunbo' values to 'Mocap' to minimize confusion in future development
+    Added Export and Import Settings
+    Added 'MocapTransferInfo' node ability to automatically clean up leftover errata from game bake
+
+v1.3
+10.19.2020 
+    Added 'Trim Keys' function to trim post-baked rig animation
+    Added function to drag trimmed action to start at 0
+    Added Euler curve cleanup to post-transfer AS constraints and post-bake AS rig
+    Added 'Export Setting' includes trim frame function numbers
+    
+v1.4    
+10.21.2020
+    Fixed crash bug when empty returns from setting FBX/Mocap folders 
+    When 'AS rig' is imported, all process buttons go back to green
+    Automatic going to frame -20 when Mixamo is read in
+
+v1.5    
+10.23.2020
+    Added Video Tutorials to the menu
+	
+v1.6
+3.4.2022
+    All for YunboAI:
+	Added popup to remind people to use Underscore for tracking Left adn Right body parts
+	Saved unique YunboAI tracking alignment file to Dropbox Motrabake folder
+	Added automatic T-pose save at -20 
+	Added scaling group for FBX 
+	Automatic setting of keyframe range for baking onto Game Rig once fbx is read in - later opening scene of AS overwrites it in Maya
+	
+v1.7
+3.9.2022
+    For Mixamo:
+    Made popup mentioned above specific to YunboAI - Mixamo does not use it
+    Made actual T pose saved at -20 - was previously just resting pose
+    
+    
+ To Do:
+Because Mixamo has no consistent starting pose, there is no universal 'T Pose'
+Automatic Sizing (or better, a resizing option for mocap input)
+Option to save out faceanims in gamebake
+Get rid of $MoTraBake_UI window mentions, replace with MoTraBake
+Have it close out all AS windows, not TransferMocap window
+Saving out cleaned up Mocap has a 'Clear' button
+poseEditor.png
+
+*/
+
+global proc Mocap_Scriptcheck()
+{
+string $AS_Script_FolderLoc = `internalVar -usd`;
+string $CheckASfile = ($AS_Script_FolderLoc + "AdvancedSkeleton5.mel");
+if (`filetest -r $CheckASfile` == 0)
+    {
+    confirmDialog -m ($CheckASfile + " Doesn't exist \n \n You need to install the file: AdvancedSkeleton5.mel \n and the folder: AdvancedSkeleton5Files \n in your scripts directory or this process will not work. \n Use the above location as your scripts directory ") -b "Ah - I'll fix that." -cancelButton "No" -dismissString "No";;
+    }
+else
+    {
+Mocap_UI;
+    }
+}
+
+global proc Mocap_UI()
+{	
+
+if (`window -exists Window_MotraBake_UI`)        
+     deleteUI Window_MotraBake_UI; 
+
+global string $versionNumber = "1.7";
+
+string $MotraBake_UI = `window -title  ("MotraBake " + $versionNumber)
+    -menuBar true 
+    -height 300 
+    -width 500
+    Window_MotraBake_UI`;
+
+// Read/Save out preferences of current setup
+
+menu -label "Settings" -tearOff false;
+    menuItem -label "Read in Settings" -c ReadMocapSettings;
+    menuItem -label "Export Current Settings" -c WriteMocapSettings;
+    menuItem -divider true -dividerLabel "Section 1";   
+
+
+// Menu List of current project, workspace and script folder for user. 
+
+menu -label "System Folders" -tearOff false;
+    menuItem -label ("Workspace: " + `workspace -q -directory`);
+    menuItem -label ("Project: " + `workspace -q -rd`);
+    menuItem -label ("Scripts: " + `internalVar -usd`);
+    
+menu -label "Tutorials" -tearOff false;
+    menuItem -subMenu true -label "Basics";
+        menuItem -label "Youtube" -c LaunchTutorial;
+//            menuItem -label "Green";
+//            menuItem -label "Yellow";
+  
+    columnLayout;
+    
+    // when the below menu is selected, it changes the operation button for the chosen mocap
+separator -height 17 -width 300;
+     optionMenu -cc optionMenuChanged TypeOfMocap;
+			menuItem -label "Mixamo";
+            menuItem -label "YunboAI";
+//    The below sets the actual 'drawing area' of the collapsable AS menu items
+
+	columnLayout -columnWidth 250 -height 650 -width 300;
+
+separator -height 17 -width 300;
+frameLayout -collapsable true -collapse true -en 1 -label "FBX and Advanced Skeleton Folders";		
+		rowLayout -columnWidth3 80 100 80 -height 28 -numberOfColumns 3 -width 300;
+			button -height 17 -label "Set FBX Folder" -width 120  -backgroundColor .5 .7 .5 -c "SetFBXFolder" button_SetFBXFolder;
+			textField -height 23 -width 140 text_SetFBXFolder;	
+            button -height 17 -label "Clear" -width 30 -backgroundColor .5 .3 .5 -c "ClearSetFBXFolder" button_ClearSetFBXFolder;
+
+// I tried to get rid of making separate 'clear function for the button below, didn't work - fix later? 	
+
+			setParent ..;
+
+		rowLayout -columnWidth3 80 100 80 -height 28 -numberOfColumns 6 -width 300;
+
+			button -height 17 -label " Set AS Folder" -width 120  -backgroundColor .5 .7 .5 -c "SetASFolder" button_SetASFolder;
+			textField -height 23 -width 140 text_SetASFolder;	
+		    button -height 17 -label "Clear" -width 30 -backgroundColor .5 .3 .5 -c "ClearSetASFolder" button_ClearSetASFolder;	
+			setParent ..;
+setParent ..;
+separator -height 17 -width 304;
+		rowLayout -columnWidth3 80 140 80  -height 28 -numberOfColumns 3 -width 300;
+			button -height 20 -label "Read in FBX" -bgc 1.0 1.0 .4 -width 80 -c "ReadInMocapFBX" button_ReadInMocapFBX;
+			textField -height 23 -width 140 text_ReadInMocapFBX;	
+		    button -height 17 -label "Clear" -width 30 -backgroundColor .5 .3 .5 -c "ClearFBX" button_ClearFBX;		
+			setParent ..;
+		rowLayout -columnWidth2 100 150 -height 28 -numberOfColumns 2 -width 250;
+//     Changes the action button to cleanup the specific mocap choice. 
+            button -height 28 -label "T Pose Mixamo" -width 100 -c ModifyMocap -backgroundColor .5 .5 .7 button_RebakeMocap;
+			setParent ..;
+	    rowLayout -columnWidth3 80 140 80  -height 28 -numberOfColumns 3 -width 300;
+			button -height 17 -label "Output .ma" -width 120  -backgroundColor .5 .7 .5 -c "SaveReabakedMocap" button_SaveReabakedMocap;
+			textField -height 23 -width 140 text_SaveReabakedMocap;
+			setParent ..;
+separator -height 17 -width 304;
+			frameLayout -collapsable true -collapse true -en 1 -label "Put onto an Advanced Skeleton for Animator" -ec "window -e -height 700 -width 320 Window_MotraBake_UI" -cc "window -e -height 300 -width 320 Window_MotraBake_UI";    
+		separator -height 17 -width 320;
+		rowLayout -columnWidth3 80 134 80  -height 28 -numberOfColumns 3 -width 294;
+			button -height 28 -label "Read in AS Rig" -bgc 1.0 1.0 .4 -width 80 -command "ReadinASRig" button_ReadinASRig;
+			textField -height 23 -width 134 textField_ReadinASRig;
+			   button -height 17 -label "Clear" -width 30 -backgroundColor .5 .3 .5 -c "ClearASRig" button_ClearASRig;	
+			setParent ..;
+		rowLayout -columnWidth2 80 80  -height 28 -numberOfColumns 2 -width 160;
+			button -height 28 -label "Read in Mocap Skeleton" -width 200 -backgroundColor .5 .7 .5 -c "ReferenceinSavedMocapiMayaFile" button_ReferenceinSavedMocapiMayaFile;
+			setParent ..;
+		rowLayout -columnWidth2 80 80  -height 28 -numberOfColumns 2 -width 160;
+			button -height 28 -label "Prepare Transfer to AS" -width 200 -backgroundColor .5 .7 .5 -c "PrepareTransfertoAS" button_PrepareTransfertoAS;
+			setParent ..;
+		rowLayout -columnWidth2 80 80  -height 28 -numberOfColumns 2 -width 160;
+			button -height 28 -label "Transfer moves to AS" -width 200 -backgroundColor .5 .7 .5 -c "TransferMocapToAS" button_TransferMocapToAS;
+			setParent ..;
+		rowLayout -columnWidth2 80 80  -height 28 -numberOfColumns 2 -width 160;
+			button -height 28 -label "Bake + Unload Mocap" -width 200 -backgroundColor .5 .7 .5 -c "CleanupMocap" button_CleanupMocap;
+			setParent ..;
+			separator -height 17 -width 304;
+			frameLayout -collapsable true -collapse true -en 1 -label "Bake onto Game Rig for Export into Game" -ec "window -e -height 700 -width 320 Window_MotraBake_UI" -cc "window -e -height 300 -width 320 Window_MotraBake_UI";	
+		rowLayout -columnWidth2 80 80  -height 28 -numberOfColumns 2 -width 160;
+			button -height 28 -label "Bake Onto Game Rig" -width 200 -backgroundColor .5 .7 .5 -c "MocapBake" button_MocapBake;
+			setParent ..;
+		rowLayout -columnWidth2 80 80  -height 28 -numberOfColumns 2 -width 160;
+					button -height 29 -label "Trim Action" -width 200 -backgroundColor .5 .5 .7 -c TrimIt TrimAnimButton;
+			setParent ..;
+		rowLayout -columnWidth2 100 100  -height 23 -numberOfColumns 2 -width 160;
+			intField -height 23 -width 100 intField_InKey;
+			intField -height 23 -width 100 intField_OutKey;
+			setParent ..;
+		rowLayout -columnWidth2 80 80 -height 17 -numberOfColumns 2 -width 160;
+			text -height 17 -label "FrameIn" -width 80;
+			text -height 17 -label "FrameOut" -width 80;
+			setParent ..;
+	    rowLayout -columnWidth2 80 80 -height 28 -numberOfColumns 2 -width 160;
+		button -height 28 -label "Close All Windows" -width 200 -backgroundColor .5 .5 .7 -c "CloseAllWindowsYB" button_CloseAllWindowsYB;
+			setParent ..;
+	
+showWindow $MotraBake_UI;
+
+window -e 
+    -height 320 
+    -width 300
+    Window_MotraBake_UI;
+
+};
+
+
+// When the user changes the Mocap type, the below changes the button color, name and command. 
+  global proc optionMenuChanged()
+  {
+  	 string $selectedItem = `optionMenu -q -value TypeOfMocap`;
+  	   	 if ($selectedItem == "Mixamo")
+  	   	 {
+  	    print ("Menu item number " + $selectedItem + " is selected \n");
+        button -edit -label "T Pose Mixamo" -bgc .5 .5 .7 button_RebakeMocap;
+        }  	  	
+   else if ($selectedItem == "YunboAI")
+  	   {
+        print ("Menu item number " + $selectedItem + " is selected \n");
+        button -edit -label "Bake YunboAI" -bgc .5 .7 .7 button_RebakeMocap;
+        }
+   }
+
+global proc ModifyMocap()
+{
+ string $labelA;
+ string $labelB;
+ string $currentLabel;
+ 
+ $currentLabel = `button -query -label button_RebakeMocap`;
+ print ("Currentlabel is " + $currentLabel + "\n");
+ $labelA = "T Pose Mixamo";
+ $labelB = "Bake YunboAI";
+ if ($currentLabel == $labelA) 
+     {
+     TPoseMixamo;
+     print "I am executing Mixamo script \n";
+     } 
+ else if ($currentLabel == $labelB) 
+     {
+    print "I am executing YunboAI script \n";
+    RebakeYunboAI;
+     }
+}
+
+global proc SetFBXFolder()
+{
+      if (`textField -q -text text_SetFBXFolder` == "")
+        {
+        string $result[] = `fileDialog2 -ff "FBX (*.fbx);;" -cap "Select FBX folder" -okc "Open" -dialogStyle 2 -fm 3`;
+            if (1 == `size($result)`)
+            {
+            textField -e -text $result[0] text_SetFBXFolder;
+            print "Setting FBX Folder.\n";
+            }
+        }
+}
+
+
+global proc ClearSetFBXFolder()
+    {
+    textField -e -text "" text_SetFBXFolder;
+    }
+    
+global proc SetASFolder()
+{
+    if (`textField -q -text text_SetASFolder` == "")
+        {
+        string $result[] = `fileDialog2 -ff "ASCII (*.ma);;" -cap "Select AS rig folder" -okc "Open" -dialogStyle 2 -fm 3`;
+            if (1 == `size($result)`)
+            {
+            textField -e -text $result[0] text_SetASFolder;
+            print "Setting AS Folder.\n";
+            }
+        }
+}
+
+global proc ClearSetASFolder()
+    {
+    textField -e -text "" text_SetASFolder;
+    }
+
+
+global proc ReadInMocapFBX()
+{
+    if (`textField -q -text text_ReadInMocapFBX` == "")
+        {
+        $beginningFolder = `textField -q -text text_SetFBXFolder`;
+        string $result[] = `fileDialog2 -ff "FBX (*.fbx);;" -dir $beginningFolder -cap "Select .fbx file" -okc "Open" -dialogStyle 2 -fm 1`;
+            if (1 == `size($result)`)
+            {
+            file -open -force -ignoreVersion $result[0];
+            textField -e -text $result[0] text_ReadInMocapFBX;
+            button -e -backgroundColor .5 .5 .5 -label "Re-read .FBX in" button_ReadInMocapFBX;
+            print "Reading in Original Mocap FBX.\n";
+            }
+         }
+        else
+        {
+          file -open -force -ignoreVersion `textField -q -text text_ReadInMocapFBX`;
+           print "Re-Reading in Mocap FBX.\n";
+        }
+ // Change the current time unit to ntsc
+ currentUnit -time ntsc;
+ currentUnit -linear "ft";
+ //change playback to realtime 30fps
+ playbackOptions -ps 1;
+    currentTime -edit -20;
+ // set the baking timeline for Motrabake to be the FBX. Opening the AS skeleton later overwrites it in Maya, so best to store it in Motrabake. 
+ // fillng in start/end frame for later baking to game rig 
+intField -e -v `playbackOptions -q -minTime` intField_InKey ;
+intField -e -v `playbackOptions -q -maxTime` intField_OutKey;
+}
+
+global proc ClearFBX()
+{
+    textField -e -text "" text_ReadInMocapFBX;
+    textField -e -text "" text_SaveReabakedMocap;
+    button -e -label "Open New FBX" -backgroundColor .5 .7 .5 button_ReadInMocapFBX;
+}
+
+global proc ClearASRig()
+{
+    textField -e -text "" textField_ReadinASRig;
+    button -e -label "Read in AS Rig" -bgc 1.0 1.0 .4 button_ReadinASRig;
+}
+
+
+global proc SaveReabakedMocap()
+{
+ // catchall to make sure current time unit to ntsc, playback to realtime 30fps, size to feet
+ // User may have skipped TPose Bake for some reason
+ 
+ currentUnit -time ntsc;
+ currentUnit -linear "ft";
+ playbackOptions -ps 1;
+string $fileName = `file -q -sn`;
+// remove .fbx or any other suffix
+int $i;
+for ($i  = `size $fileName`; $i > 0; $i--){
+    $char = `substring $fileName $i $i`;
+    if (`strcmp $char "."` == 0){
+        break;
+    }
+}
+string $fn = substring($fileName, 1, $i-1); 
+string $fullName = $fn;
+file -rn $fullName;
+file -force -type "mayaAscii" -save;
+textField -e -text ($fullName + ".ma") text_SaveReabakedMocap;
+}
+
+
+
+
+global proc ReadinASRig()
+{    if (`textField -q -text textField_ReadinASRig` == "")
+    {
+    $ASfolder = `textField -q -text text_SetASFolder`;
+    button -e -backgroundColor .5 .5 .5 -label "Re-read AS Rig" button_ReadinASRig;
+    string $result[] = `fileDialog2 -ff  "Maya Files (*.ma *.mb);;Maya ASCII (*.ma);;Maya Binary (*.mb);" -dir $ASfolder -cap "Select Maya file to open" -okc "Open" -dialogStyle 2 -fm 1`;
+        if (1 == `size($result)`)
+       {
+        file -open -force -ignoreVersion $result[0];
+        textField -e -text $result[0] textField_ReadinASRig;
+	    select -cl  ;
+	    print "Reading in newly-chosen AS Rig \n";
+	    }
+	    }
+	else
+        {
+         file -open -force -ignoreVersion `textField -q -text textField_ReadinASRig`;
+         print "Reading in previous Rig \n";
+        }
+button -e -backgroundColor .5 .7 .5 button_ReferenceinSavedMocapiMayaFile;
+button -e -backgroundColor .5 .7 .5 button_PrepareTransfertoAS;
+button -e -width 200 -backgroundColor .5 .7 .5 button_TransferMocapToAS;
+button -e -width 200 -backgroundColor .5 .7 .5 button_CleanupMocap;
+button -e -width 200 -backgroundColor .5 .7 .5 button_MocapBake;
+    // Change the current time unit to ntsc
+ currentUnit -time ntsc;
+ //change playback to realtime 30fps
+ playbackOptions -ps 1;
+  currentUnit -linear "ft";
+}
+
+global proc ReferenceinSavedMocapiMayaFile()
+{
+
+string $Mocapfile = `textField -q -text text_SaveReabakedMocap`;
+if  ($Mocapfile == "") 
+ {confirmDialog -m "Need a file in the 'Output.ma' field" -b "Roger that";
+				return;
+				}
+else {
+button -e -backgroundColor .5 .5 .5 button_ReferenceinSavedMocapiMayaFile;
+file -r -type "mayaAscii"  -ignoreVersion -gl -mergeNamespacesOnClash false -namespace "Mocap" -options "v=0;p=17;f=0" $Mocapfile;
+
+// Setting current frame -20 so transferrence can happen. 
+
+	    print ("Referencing in saved Mocap skeleton " + $Mocapfile + "\n");
+	    currentTime -20;
+	    }
+string $selectedItem = `optionMenu -q -value TypeOfMocap`;
+     if ($selectedItem == "Mixamo")
+  	 {
+  	    print ("Source is Mixamo, setting frame to -20\n");
+  	    currentTime -20;
+  	    }
+}
+
+// Needs to source the AS mel scripts to work, the user needs all files in their scripts folder as indicated by menu
+/////////////// should check if everything is in order on the AS rig that the connections needs here ////////////
+global proc PrepareTransfertoAS()
+{
+    button -e -backgroundColor .5 .5 .5 button_PrepareTransfertoAS;
+    print "Preparing to Transfer Mocap.\n";
+    button -edit -backgroundColor .5 0.5 0.5 button_PrepareTransfertoAS;
+    string $AS_Script_FolderLoc = `internalVar -usd`;
+    print ($AS_Script_FolderLoc + "AdvancedSkeleton5.mel");
+    eval("source \""+$AS_Script_FolderLoc+"AdvancedSkeleton5.mel\"");
+    eval("source \""+$AS_Script_FolderLoc+"AdvancedSkeleton5Files/picker/picker.mel\"");
+
+    np_getPrimaryProjectFileRules 0;
+    asMoCapMatcherUI asPicker;
+select -cl  ;
+    $ASMocapFilter = `optionMenu -q -value TypeOfMocap asMappingUIFiles`;
+    if ($ASMocapFilter == "Mixamo") 
+        select -r Mocap:Hips ;
+    else  if ($ASMocapFilter == "YunboAI") 
+    select -r Mocap:Pelvis ;
+    asMoCapMatcherNameSpaceDetect;
+    asMoCapMatcherScan;
+    asMappingUIFunction MoCapZeroOut;
+    asSetAllFK "";
+	
+//    this references the type of mocap selected from the menu;
+
+    $ASMocapFilter = `optionMenu -q -value TypeOfMocap asMappingUIFiles`;
+    print ("Type of Mocap Filter is " + $ASMocapFilter + "\n");
+    optionMenu -e -v $ASMocapFilter asMappingUIFiles;
+    asMappingUIFileOptionMenuChanged moCapMatcher;
+// Checking to see if the underscores are in place to find YunboAI bones. Ex: Right_Arm vs RightArm [Which is Mixamo])
+    string $selectedItem = `optionMenu -q -value TypeOfMocap`;
+     if ($selectedItem == "YunboAI")
+  	 {
+  	    print ("Source is YunboAI, setting frame to -20\n");
+  	    	if (`checkBox -q -v asMappingUISideUnderScoreCheckBox` == 0)
+            {
+            confirmDialog -m ("you do not have underscores checked to divide left from right") -b "Ah - I'll fix that." -cancelButton "No" -dismissString "No";
+            } 
+  	 }
+  	    currentTime -20;
+  	 }
+
+global proc TransferMocapToAS()
+{
+    button -e -backgroundColor .5 .5 .5 button_TransferMocapToAS;
+    asMappingUIFunction MoCapConnect;
+    print "Transfering Mocap to AS Rig.\n";
+}
+global proc CleanupMocap()
+{
+    button -e -backgroundColor .5 .5 .5 button_CleanupMocap;
+    select -cl;
+    $ASMocapFilter = `optionMenu -q -value TypeOfMocap asMappingUIFiles`;
+    if ($ASMocapFilter == "Mixamo") 
+       { 
+       select -r Mocap:Hips ;
+       // Mixamo needs a T-pose at frame -20 - this removes the negative keyframes post-bake
+       cutKey -hi below -time "-20:0";
+       }
+    else  if ($ASMocapFilter == "YunboAI") 
+    select -r Mocap:Pelvis ;
+    TimeLineShift;
+    asMoCapMatcherBake;
+    
+    string $Mocapfile = `textField -q -text text_SaveReabakedMocap`;
+    file -force -removeReference $Mocapfile; 
+    print "Unreferencing Mocap skeleton.\n";
+	   print "running Euler filter on AS Controllers.\n";
+jh_getKeyObjs;
+Euler_Cleanup;
+}
+
+// This selects all objects (controlles) that have animation (usu. for below process)
+global proc jh_getKeyObjs()
+{
+  string $objects[] = `ls -dagObjects`;     //Create an array with all dag objects in the scene
+
+  select -cl;                               //Clear selection
+  for ($i=0; $i < `size $objects`; $i++)    //For each object in the $objects array
+  {
+    //If the objects has keyframe values at the current time, toggle-select it
+    if(`keyframe -query -keyframeCount $objects[$i]` != 0)
+    {
+      print ($objects[$i] + " ");
+      select -tgl $objects[$i];
+    }
+  }
+}
+
+/// This runs Euler filter on  keyframes in currently selected items
+global proc Euler_Cleanup()
+{
+$selected = `ls -sl`;
+    {
+    for ($i=0; $i<size($selected); $i=$i+1)
+        {
+        select -add $selected[$i];
+        filterCurve ($selected[$i] + ".rx") ($selected[$i] + ".ry") ($selected[$i] + ".rz");
+        }
+    }
+}
+
+
+global proc MocapBake()
+{
+// Removing Face Setup
+if (`objExists FaceGroup`)  
+{      
+      print "FaceGroup Found - removing.\n";
+asToggleFitFace;
+select -r FaceGroup ;
+delete;
+}
+    asAnimBake asPicker;
+    asAnimBakeGo asPicker;
+      print "Baking body onto Game Rig.\n";
+
+delete -staticChannels -unitlessAnimationCurves false -hierarchy none -controlPoints 0 -shape 1;
+DeleteAllConstraints;
+delete -all -constraints;
+// Removing Anything listed in MocapTransferInfo Notes
+if( `objExists MocapTransferInfo` ) 
+{
+    string $arrayz[];
+$arrayz = stringToStringArray(`getAttr MocapTransferInfo.notes`," :\n\r");
+string $tokens[];
+tokenize $arrayz[0] " :\n\r" $tokens;
+
+for ($each in $arrayz)
+	    {
+        print ($each + "\n");
+        if (`objExists $each`)
+            {
+            delete $each;
+	        }
+	    else
+	        {
+	        warning("No object " + $each + " exists");
+	        }
+        }
+
+} 
+else {
+    confirmDialog  -m ("No locator MocapTransferInfo exists \n So no automatic cleanup will happen. \n This may result in unnecessary leftover items") -b "I'll delete leftover items by hand" -cancelButton "No" -dismissString "No";;
+}
+      print "Cleaning Up Game Rig.\n";
+       print "Applying Euler filter to all curves.\n";
+      select -cl;
+for	($joint in `ls -type joint`)
+	{for	($attr in `listAttr -k $joint`)
+		{float $keys[] = `keyframe -q -timeChange ($joint + "." + $attr)`;
+		if (`size $keys`>0)select -add $joint;}
+	}
+string $selected[] = `ls -sl -type joint`;
+
+select -cl;
+int $i;
+
+for ($i=0; $i<size($selected); $i=$i+1)
+{
+select -add $selected[$i];
+filterCurve ($selected[$i] + ".rx") ($selected[$i] + ".ry") ($selected[$i] + ".rz");
+}
+button -e -backgroundColor .5 .5 .5  button_MocapBake;
+}
+
+global proc CloseAllWindowsYB()
+{
+			if (`workspaceControl -ex asPickerWorkspaceControl`)
+		deleteUI asPickerWorkspaceControl;
+		   if (`window -ex asMappingUI`)
+		deleteUI asMappingUI;
+}
+
+
+global proc RebakeYunboAI()
+{
+    button -e -backgroundColor .5 .5 .5 button_RebakeMocap;
+    button -e -backgroundColor .5 .7 .5 button_SaveReabakedMocap;
+    print "Rebaking yunboAI skeleton.\n";
+    if (`objExists stand`)        
+     {select -r stand;
+      TimeLineShift;
+      }
+        select -cl;
+    select -r Pelvis ;
+    TimeLineShift;
+    spaceLocator -p 0 0 0;
+// constraining it to Pelvis (NOTE: No offsets is crucial) // 
+select -cl;
+fitPanel -all;
+select -r Pelvis ;
+select -add locator1 ;
+doCreateParentConstraintArgList 1 { "0","0","0","0","0","0","0","0","1","","1" };
+parentConstraint -weight 1;
+select -cl;
+select -r locator1 ;
+
+bakeResults -simulation true -t ("-20:" + (`playbackOptions -q -maxTime`)) -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape false {"locator1"};
+
+// deleting contraint // 
+select -r locator1_parentConstraint1 ;
+delete;
+select -cl;
+// unparenting 'Pelvis' to be new standalone mocap root - deleting old one: 'Stand'
+select -r Pelvis ;
+parent -w;
+select -cl;
+select -r stand ;
+delete;
+// copying keys from Constraint 
+select -r locator1 ;
+copyKey -time ":" -hierarchy none -controlPoints 0 -shape 0 {"locator1"};
+// Overwriting all extent keys on Pelvis root node // 
+select -r Pelvis ;
+pasteKey -option replaceCompletely -copies 1 -connect 0 -timeOffset 0 -floatOffset 0 -valueOffset 0 {"Pelvis"};
+// Deleting locator that hae served us so well on the sea O.// 
+select -r locator1 ;
+delete;
+select -cl;
+select -r Pelvis ;
+
+keyframe -edit -relative -vc -90 "Pelvis.rotateZ";
+keyframe -edit -relative -vc 12 "Pelvis.rotateY";
+
+select -cl;
+select -hi Pelvis;
+selectKey -add -k Pelvis_translateX Pelvis_translateY Pelvis_translateZ Pelvis_rotateX Pelvis_rotateY Pelvis_rotateZ Spine_translateX Spine_translateY Spine_translateZ Spine_rotateX Spine_rotateY Spine_rotateZ Spine1_translateX Spine1_translateY Spine1_translateZ Spine1_rotateX Spine1_rotateY Spine1_rotateZ Spine2_translateX Spine2_translateY Spine2_translateZ Spine2_rotateX Spine2_rotateY Spine2_rotateZ Neck_translateX Neck_translateY Neck_translateZ Neck_rotateX Neck_rotateY Neck_rotateZ Head_translateX Head_translateY Head_translateZ Head_rotateX Head_rotateY Head_rotateZ Left_Clavicle_translateX Left_Clavicle_translateY Left_Clavicle_translateZ Left_Clavicle_rotateX Left_Clavicle_rotateY Left_Clavicle_rotateZ Left_UpperArm_translateX Left_UpperArm_translateY Left_UpperArm_translateZ Left_UpperArm_rotateX Left_UpperArm_rotateY Left_UpperArm_rotateZ Left_Forearm_translateX Left_Forearm_translateY Left_Forearm_translateZ Left_Forearm_rotateX Left_Forearm_rotateY Left_Forearm_rotateZ Left_Hand_translateX Left_Hand_translateY Left_Hand_translateZ Right_Clavicle_translateX Right_Clavicle_translateY Right_Clavicle_translateZ Right_Clavicle_rotateX Right_Clavicle_rotateY Right_Clavicle_rotateZ Right_UpperArm_translateX Right_UpperArm_translateY Right_UpperArm_translateZ Right_UpperArm_rotateX Right_UpperArm_rotateY Right_UpperArm_rotateZ Right_Forearm_translateX Right_Forearm_translateY Right_Forearm_translateZ Right_Forearm_rotateX Right_Forearm_rotateY Right_Forearm_rotateZ Right_Hand_translateX Right_Hand_translateY Right_Hand_translateZ Left_Thigh_translateX Left_Thigh_translateY Left_Thigh_translateZ Left_Thigh_rotateX Left_Thigh_rotateY Left_Thigh_rotateZ Left_Calf_translateX Left_Calf_translateY Left_Calf_translateZ Left_Calf_rotateX Left_Calf_rotateY Left_Calf_rotateZ Left_Foot_translateX Left_Foot_translateY Left_Foot_translateZ Left_Foot_rotateX Left_Foot_rotateY Left_Foot_rotateZ Left_Toe0_translateX Left_Toe0_translateY Left_Toe0_translateZ Left_Toe0_rotateX Left_Toe0_rotateY Left_Toe0_rotateZ Right_Thigh_translateX Right_Thigh_translateY Right_Thigh_translateZ Right_Thigh_rotateX Right_Thigh_rotateY Right_Thigh_rotateZ Right_Calf_translateX Right_Calf_translateY Right_Calf_translateZ Right_Calf_rotateX Right_Calf_rotateY Right_Calf_rotateZ Right_Foot_translateX Right_Foot_translateY Right_Foot_translateZ Right_Foot_rotateX Right_Foot_rotateY Right_Foot_rotateZ Right_Toe0_translateX Right_Toe0_translateY Right_Toe0_translateZ Right_Toe0_rotateX Right_Toe0_rotateY Right_Toe0_rotateZ ;
+filterCurve  Pelvis_translateX Pelvis_translateY Pelvis_translateZ Pelvis_rotateX Pelvis_rotateY Pelvis_rotateZ Spine_translateX Spine_translateY Spine_translateZ Spine_rotateX Spine_rotateY Spine_rotateZ Spine1_translateX Spine1_translateY Spine1_translateZ Spine1_rotateX Spine1_rotateY Spine1_rotateZ Spine2_translateX Spine2_translateY Spine2_translateZ Spine2_rotateX Spine2_rotateY Spine2_rotateZ Neck_translateX Neck_translateY Neck_translateZ Neck_rotateX Neck_rotateY Neck_rotateZ Head_translateX Head_translateY Head_translateZ Head_rotateX Head_rotateY Head_rotateZ Left_Clavicle_translateX Left_Clavicle_translateY Left_Clavicle_translateZ Left_Clavicle_rotateX Left_Clavicle_rotateY Left_Clavicle_rotateZ Left_UpperArm_translateX Left_UpperArm_translateY Left_UpperArm_translateZ Left_UpperArm_rotateX Left_UpperArm_rotateY Left_UpperArm_rotateZ Left_Forearm_translateX Left_Forearm_translateY Left_Forearm_translateZ Left_Forearm_rotateX Left_Forearm_rotateY Left_Forearm_rotateZ Left_Hand_translateX Left_Hand_translateY Left_Hand_translateZ Right_Clavicle_translateX Right_Clavicle_translateY Right_Clavicle_translateZ Right_Clavicle_rotateX Right_Clavicle_rotateY Right_Clavicle_rotateZ Right_UpperArm_translateX Right_UpperArm_translateY Right_UpperArm_translateZ Right_UpperArm_rotateX Right_UpperArm_rotateY Right_UpperArm_rotateZ Right_Forearm_translateX Right_Forearm_translateY Right_Forearm_translateZ Right_Forearm_rotateX Right_Forearm_rotateY Right_Forearm_rotateZ Right_Hand_translateX Right_Hand_translateY Right_Hand_translateZ Left_Thigh_translateX Left_Thigh_translateY Left_Thigh_translateZ Left_Thigh_rotateX Left_Thigh_rotateY Left_Thigh_rotateZ Left_Calf_translateX Left_Calf_translateY Left_Calf_translateZ Left_Calf_rotateX Left_Calf_rotateY Left_Calf_rotateZ Left_Foot_translateX Left_Foot_translateY Left_Foot_translateZ Left_Foot_rotateX Left_Foot_rotateY Left_Foot_rotateZ Left_Toe0_translateX Left_Toe0_translateY Left_Toe0_translateZ Left_Toe0_rotateX Left_Toe0_rotateY Left_Toe0_rotateZ Right_Thigh_translateX Right_Thigh_translateY Right_Thigh_translateZ Right_Thigh_rotateX Right_Thigh_rotateY Right_Thigh_rotateZ Right_Calf_translateX Right_Calf_translateY Right_Calf_translateZ Right_Calf_rotateX Right_Calf_rotateY Right_Calf_rotateZ Right_Foot_translateX Right_Foot_translateY Right_Foot_translateZ Right_Foot_rotateX Right_Foot_rotateY Right_Foot_rotateZ Right_Toe0_translateX Right_Toe0_translateY Right_Toe0_translateZ Right_Toe0_rotateX Right_Toe0_rotateY Right_Toe0_rotateZ;
+// Newest additions since 3.4.2022 to straighten out all YunboAI, add T pose at -20 and put it all in scaleable group
+catch (`setAttr "Right_Toe0.scaleZ" 0.9999995873`);
+catch (`setAttr "Right_Toe0.scaleY" 1.000000119`);
+catch (`setAttr "Right_Toe0.scaleX" 0.9999993489`);
+catch (`setAttr "Right_Toe0.rotateZ" -2.70312903e-05`);
+catch (`setAttr "Right_Toe0.rotateY" 0.005486323033`);
+catch (`setAttr "Right_Toe0.rotateX" 1.610097934e-05`);
+catch (`setAttr "Right_Toe0.translateZ" 0.03280856321`);
+catch (`setAttr "Right_Toe0.translateY" 0.4017870883`);
+catch (`setAttr "Right_Toe0.translateX" 0.14299888`);
+catch (`setAttr "Right_Toe0.visibility" 1`);
+catch (`setAttr "Right_Foot.scaleZ" 1.000000679`);
+catch (`setAttr "Right_Foot.scaleY" 1.000000622`);
+catch (`setAttr "Right_Foot.scaleX" 1.000000509`);
+catch (`setAttr "Right_Foot.rotateZ" -3.855858088`);
+catch (`setAttr "Right_Foot.rotateY" -3.962547064`);
+catch (`setAttr "Right_Foot.rotateX" -4.441932201`);
+catch (`setAttr "Right_Foot.translateZ" -0.01373785472`);
+catch (`setAttr "Right_Foot.translateY" -0.01290980971`);
+catch (`setAttr "Right_Foot.translateX" 1.363961653`);
+catch (`setAttr "Right_Foot.visibility" 1`);
+catch (`setAttr "Right_Calf.scaleZ" 0.9999989833`);
+catch (`setAttr "Right_Calf.scaleY" 0.9999992873`);
+catch (`setAttr "Right_Calf.scaleX" 0.9999994645`);
+catch (`setAttr "Right_Calf.rotateZ" 0.3234071136`);
+catch (`setAttr "Right_Calf.rotateY" 0.5625717044`);
+catch (`setAttr "Right_Calf.rotateX" -2.547862053`);
+catch (`setAttr "Right_Calf.translateZ" 1.611359163e-05`);
+catch (`setAttr "Right_Calf.translateY" -6.114170132e-05`);
+catch (`setAttr "Right_Calf.translateX" 1.463486203`);
+catch (`setAttr "Right_Calf.visibility" 1`);
+catch (`setAttr "Right_Thigh.scaleZ" 1.000000656`);
+catch (`setAttr "Right_Thigh.scaleY" 1.000000527`);
+catch (`setAttr "Right_Thigh.scaleX" 1.000000216`);
+catch (`setAttr "Right_Thigh.rotateZ" 1.296314001`);
+catch (`setAttr "Right_Thigh.rotateY" 4.083957195`);
+catch (`setAttr "Right_Thigh.rotateX" -1.000766039`);
+catch (`setAttr "Right_Thigh.translateZ" -0.3084117346`);
+catch (`setAttr "Right_Thigh.translateY" -0.0483911416`);
+catch (`setAttr "Right_Thigh.translateX" -0.05535915533`);
+catch (`setAttr "Right_Thigh.visibility" 1`);
+catch (`setAttr "Left_Toe0.scaleZ" 0.9999996147`);
+catch (`setAttr "Left_Toe0.scaleY" 0.9999997964`);
+catch (`setAttr "Left_Toe0.scaleX" 1.000000544`);
+catch (`setAttr "Left_Toe0.rotateZ" -0.01509729959`);
+catch (`setAttr "Left_Toe0.rotateY" 0.01446514018`);
+catch (`setAttr "Left_Toe0.rotateX" -0.0002292074059`);
+catch (`setAttr "Left_Toe0.translateZ" -0.0328078338`);
+catch (`setAttr "Left_Toe0.translateY" 0.4017867441`);
+catch (`setAttr "Left_Toe0.translateX" 0.1429989113`);
+catch (`setAttr "Left_Toe0.visibility" 1`);
+catch (`setAttr "Left_Foot.scaleZ" 1.000000225`);
+catch (`setAttr "Left_Foot.scaleY" 1.000000016`);
+catch (`setAttr "Left_Foot.scaleX" 0.9999994881`);
+catch (`setAttr "Left_Foot.rotateZ" -5.594827175`);
+catch (`setAttr "Left_Foot.rotateY" 4.643354893`);
+catch (`setAttr "Left_Foot.rotateX" 5.846933842`);
+catch (`setAttr "Left_Foot.translateZ" 0.01355575451`);
+catch (`setAttr "Left_Foot.translateY" -0.01286230688`);
+catch (`setAttr "Left_Foot.translateX" 1.363961277`);
+catch (`setAttr "Left_Foot.visibility" 1`);
+catch (`setAttr "Left_Calf.scaleZ" 1.000000158`);
+catch (`setAttr "Left_Calf.scaleY" 1.000000039`);
+catch (`setAttr "Left_Calf.scaleX" 1.00000084`);
+catch (`setAttr "Left_Calf.rotateZ" 2.165380001`);
+catch (`setAttr "Left_Calf.rotateY" -0.5637009144`);
+catch (`setAttr "Left_Calf.rotateX" 0.4162012935`);
+catch (`setAttr "Left_Calf.translateZ" 2.709586667e-05`);
+catch (`setAttr "Left_Calf.translateY" -0.0001149227689`);
+catch (`setAttr "Left_Calf.translateX" 1.463486203`);
+catch (`setAttr "Left_Calf.visibility" 1`);
+catch (`setAttr "Left_Thigh.scaleZ" 0.9999997737`);
+catch (`setAttr "Left_Thigh.scaleY" 0.9999997035`);
+catch (`setAttr "Left_Thigh.scaleX" 0.9999996485`);
+catch (`setAttr "Left_Thigh.rotateZ" 0.3788025975`);
+catch (`setAttr "Left_Thigh.rotateY" -4.461005211`);
+catch (`setAttr "Left_Thigh.rotateX" -2.348956108`);
+catch (`setAttr "Left_Thigh.translateZ" 0.3084117346`);
+catch (`setAttr "Left_Thigh.translateY" -0.04839068401`);
+catch (`setAttr "Left_Thigh.translateX" -0.05536217076`);
+catch (`setAttr "Left_Thigh.visibility" 1`);
+catch (`setAttr "Right_Hand.scaleZ" 0.9999998378`);
+catch (`setAttr "Right_Hand.scaleY" 1.000000061`);
+catch (`setAttr "Right_Hand.scaleX" 0.9999996929`);
+catch (`setAttr "Right_Hand.rotateZ" 0`);
+catch (`setAttr "Right_Hand.rotateY" 0`);
+catch (`setAttr "Right_Hand.rotateX" 0`);
+catch (`setAttr "Right_Hand.translateZ" -2.002465995e-06`);
+catch (`setAttr "Right_Hand.translateY" 2.695506639e-05`);
+catch (`setAttr "Right_Hand.translateX" 0.8171600933`);
+catch (`setAttr "Right_Hand.visibility" 1`);
+catch (`setAttr "Right_Forearm.scaleZ" 0.9999998853`);
+catch (`setAttr "Right_Forearm.scaleY" 1.000000268`);
+catch (`setAttr "Right_Forearm.scaleX" 0.9999999267`);
+catch (`setAttr "Right_Forearm.rotateZ" 20.31109047`);
+catch (`setAttr "Right_Forearm.rotateY" -0.005123015027`);
+catch (`setAttr "Right_Forearm.rotateX" -1.999135017`);
+catch (`setAttr "Right_Forearm.translateZ" -9.66189651e-05`);
+catch (`setAttr "Right_Forearm.translateY" -0.0001885446511`);
+catch (`setAttr "Right_Forearm.translateX" 0.7773018259`);
+catch (`setAttr "Right_Forearm.visibility" 1`);
+catch (`setAttr "Right_UpperArm.scaleZ" 1.000000032`);
+catch (`setAttr "Right_UpperArm.scaleY" 0.9999993603`);
+catch (`setAttr "Right_UpperArm.scaleX" 1.000000058`);
+catch (`setAttr "Right_UpperArm.rotateZ" 4.06764698`);
+catch (`setAttr "Right_UpperArm.rotateY" 34.59981918`);
+catch (`setAttr "Right_UpperArm.rotateX" 9.028916359`);
+catch (`setAttr "Right_UpperArm.translateZ" 5.006164987e-07`);
+catch (`setAttr "Right_UpperArm.translateY" 1.548782108e-06`);
+catch (`setAttr "Right_UpperArm.translateX" 0.4753097149`);
+catch (`setAttr "Right_UpperArm.visibility" 1`);
+catch (`setAttr "Right_Clavicle.scaleZ" 1.000000054`);
+catch (`setAttr "Right_Clavicle.scaleY" 1.000000271`);
+catch (`setAttr "Right_Clavicle.scaleX" 1.000000211`);
+catch (`setAttr "Right_Clavicle.rotateZ" -4.976522923`);
+catch (`setAttr "Right_Clavicle.rotateY" 17.22528076`);
+catch (`setAttr "Right_Clavicle.rotateX" -1.524976015`);
+catch (`setAttr "Right_Clavicle.translateZ" -0.117636517`);
+catch (`setAttr "Right_Clavicle.translateY" 0.0002993842748`);
+catch (`setAttr "Right_Clavicle.translateX" 0.4199484828`);
+catch (`setAttr "Right_Clavicle.visibility" 1`);
+catch (`setAttr "Left_Hand.scaleZ" 0.9999991673`);
+catch (`setAttr "Left_Hand.scaleY" 1.000000599`);
+catch (`setAttr "Left_Hand.scaleX" 0.9999993429`);
+catch (`setAttr "Left_Hand.rotateZ" 0`);
+catch (`setAttr "Left_Hand.rotateY" 0`);
+catch (`setAttr "Left_Hand.rotateX" 0`);
+catch (`setAttr "Left_Hand.translateZ" 0`);
+catch (`setAttr "Left_Hand.translateY" 8.048972729e-06`);
+catch (`setAttr "Left_Hand.translateX" 0.8171604061`);
+catch (`setAttr "Left_Hand.visibility" 1`);
+catch (`setAttr "Left_Forearm.scaleZ" 0.999999647`);
+catch (`setAttr "Left_Forearm.scaleY" 1.000000084`);
+catch (`setAttr "Left_Forearm.scaleX" 0.9999998335`);
+catch (`setAttr "Left_Forearm.rotateZ" 19.24648094`);
+catch (`setAttr "Left_Forearm.rotateY" 1.068716049`);
+catch (`setAttr "Left_Forearm.rotateX" 0.0241209995`);
+catch (`setAttr "Left_Forearm.translateZ" 2.45302036e-05`);
+catch (`setAttr "Left_Forearm.translateY" -0.0001203669651`);
+catch (`setAttr "Left_Forearm.translateX" 0.7773021388`);
+catch (`setAttr "Left_Forearm.visibility" 1`);
+catch (`setAttr "Left_UpperArm.scaleZ" 0.999999976`);
+catch (`setAttr "Left_UpperArm.scaleY" 1.000000274`);
+catch (`setAttr "Left_UpperArm.scaleX" 1.000000176`);
+catch (`setAttr "Left_UpperArm.rotateZ" 4.088935852`);
+catch (`setAttr "Left_UpperArm.rotateY" -34.38710022`);
+catch (`setAttr "Left_UpperArm.rotateX" -6.919113159`);
+catch (`setAttr "Left_UpperArm.translateZ" 1.001232997e-06`);
+catch (`setAttr "Left_UpperArm.translateY" -2.534370723e-06`);
+catch (`setAttr "Left_UpperArm.translateX" 0.4716876611`);
+catch (`setAttr "Left_UpperArm.visibility" 1`);
+catch (`setAttr "Left_Clavicle.scaleZ" 1.000000241`);
+catch (`setAttr "Left_Clavicle.scaleY" 1.000000311`);
+catch (`setAttr "Left_Clavicle.scaleX" 1.000000107`);
+catch (`setAttr "Left_Clavicle.rotateZ" -4.672987938`);
+catch (`setAttr "Left_Clavicle.rotateY" -18.02943039`);
+catch (`setAttr "Left_Clavicle.rotateX" 1.436018944`);
+catch (`setAttr "Left_Clavicle.translateZ" 0.1176382848`);
+catch (`setAttr "Left_Clavicle.translateY" -0.0002972722687`);
+catch (`setAttr "Left_Clavicle.translateX" 0.419949484`);
+catch (`setAttr "Left_Clavicle.visibility" 1`);
+catch (`setAttr "Head.scaleZ" 1`);
+catch (`setAttr "Head.scaleY" 0.9999999369`);
+catch (`setAttr "Head.scaleX" 0.9999996985`);
+catch (`setAttr "Head.rotateZ" -0.3504543006`);
+catch (`setAttr "Head.rotateY" -0.9443386793`);
+catch (`setAttr "Head.rotateX" 1.268602014`);
+catch (`setAttr "Head.translateZ" 6.648812081e-08`);
+catch (`setAttr "Head.translateY" -2.479615561e-06`);
+catch (`setAttr "Head.translateX" 0.2371830421`);
+catch (`setAttr "Head.visibility" 1`);
+catch (`setAttr "Neck.scaleZ" 1`);
+catch (`setAttr "Neck.scaleY" 1.000000121`);
+catch (`setAttr "Neck.scaleX" 1.000000526`);
+catch (`setAttr "Neck.rotateZ" -15.49647045`);
+catch (`setAttr "Neck.rotateY" -0.5913752913`);
+catch (`setAttr "Neck.rotateX" 0.2003280073`);
+catch (`setAttr "Neck.translateZ" 6.25770698e-08`);
+catch (`setAttr "Neck.translateY" 0.06137962729`);
+catch (`setAttr "Neck.translateX" 0.5375869631`);
+catch (`setAttr "Neck.visibility" 1`);
+catch (`setAttr "Spine2.scaleZ" 1`);
+catch (`setAttr "Spine2.scaleY" 1.000000019`);
+catch (`setAttr "Spine2.scaleX" 0.9999998428`);
+catch (`setAttr "Spine2.rotateZ" 4.328032017`);
+catch (`setAttr "Spine2.rotateY" -0.0947682485`);
+catch (`setAttr "Spine2.rotateX" 0.1571677029`);
+catch (`setAttr "Spine2.translateZ" -3.128852744e-08`);
+catch (`setAttr "Spine2.translateY" -0.0005711797683`);
+catch (`setAttr "Spine2.translateX" 0.4128940149`);
+catch (`setAttr "Spine2.visibility" 1`);
+catch (`setAttr "Spine1.scaleZ" 1`);
+catch (`setAttr "Spine1.scaleY" 1.000000121`);
+catch (`setAttr "Spine1.scaleX" 1.000000001`);
+catch (`setAttr "Spine1.rotateZ" 4.332389832`);
+catch (`setAttr "Spine1.rotateY" -0.2555888891`);
+catch (`setAttr "Spine1.rotateX" 0.1581947058`);
+catch (`setAttr "Spine1.translateZ" -1.251541023e-07`);
+catch (`setAttr "Spine1.translateY" -0.0002042241144`);
+catch (`setAttr "Spine1.translateX" 0.4301702882`);
+catch (`setAttr "Spine1.visibility" 1`);
+catch (`setAttr "Spine.scaleZ" 1`);
+catch (`setAttr "Spine.scaleY" 1`);
+catch (`setAttr "Spine.scaleX" 1`);
+catch (`setAttr "Spine.rotateZ" -0.001342452015`);
+catch (`setAttr "Spine.rotateY" -0.00404719403`);
+catch (`setAttr "Spine.rotateX" 0.1191952005`);
+catch (`setAttr "Spine.translateZ" -1.222208029e-07`);
+catch (`setAttr "Spine.translateY" -6.770055603e-06`);
+catch (`setAttr "Spine.translateX" 0.2867803799`);
+catch (`setAttr "Spine.visibility" 1`);
+catch (`setAttr "Pelvis.scaleZ" 1`);
+catch (`setAttr "Pelvis.scaleY" 1.000000238`);
+catch (`setAttr "Pelvis.scaleX" 1.000000238`);
+catch (`setAttr "Pelvis.rotateZ" 0`);
+catch (`setAttr "Pelvis.rotateY" 15.33865255`);
+catch (`setAttr "Pelvis.rotateX" 90.094841`);
+catch (`setAttr "Pelvis.translateZ" 0`);
+catch (`setAttr "Pelvis.translateY" 3.071208007`);
+catch (`setAttr "Pelvis.translateX" 0`);
+catch (`setAttr "Pelvis.visibility" 1`);
+
+select -cl;
+select Pelvis;
+setKeyframe -breakdown 0 -hierarchy below;
+Group;
+rename "group1" "scale_Yunbo";
+
+}
+
+// The below trims keyframes and moves the action to start at 0 
+global proc TrimIt()
+{
+
+	string $objList[] = `ls -selection`;
+        $count = `size ($objList)`;
+
+	if( $count != 1 ) {
+				confirmDialog -m "Need to select a joint or transform" -b "Roger that";
+				return;
+			   }
+	if( nodeType( $objList[0] ) != "transform" &&  nodeType( $objList[0] ) != "joint" ) {
+				confirmDialog -m "Select objects with transform node or joints" -b "Select transform or joint";
+				return;
+			   }
+else
+{
+$keystart = `intField -q -value intField_InKey`;
+$keyend = `intField -q -value intField_OutKey`;
+print ("Trimming from " + $keystart +" to " + $keyend + "\n");
+cutKey -hi below -time (":" + $keystart +"");
+cutKey -hi below -time ("" + $keyend +":");
+print ("Moving remaining animation " + (0 - `intField -q -value intField_InKey`) + " frames \n");
+keyframe -edit -hi below -relative -timeChange (0 - `intField -q -value intField_InKey`);
+TimeLineShift;
+}
+}
+
+// The below two global proc read in and write out settings to one file
+global proc WriteMocapSettings()
+{
+// Create A String Array With Test Data
+string $myStrArray[] = 
+    {
+    "optionMenu -e -value " + `optionMenu -q -value TypeOfMocap` + " TypeOfMocap;",
+    "textField -e -text \"" + `textField -q -text text_SetFBXFolder` + "\" text_SetFBXFolder;",
+    "textField -e -text \"" + `textField -q -text text_SetASFolder` + "\" text_SetASFolder;",
+    "textField -e -text \"" + `textField -q -text text_ReadInMocapFBX` + "\" text_ReadInMocapFBX;",
+    "textField -e -text \"" + `textField -q -text text_SaveReabakedMocap` + "\" text_SaveReabakedMocap;",
+    "textField -e -text \"" + `textField -q -text textField_ReadinASRig` + "\" textField_ReadinASRig;",
+    "intField -e -value " + `intField -q -value intField_InKey` + " intField_InKey;",
+    "intField -e -value " + `intField -q -value intField_OutKey` + " intField_OutKey;"
+    };
+
+    string $filePath = (`internalVar -usd` + "Mocap_Transfer_Settings.txt") ;
+
+$fileId = `fopen $filePath "w"` ;
+
+// Print Array To File
+for($line in $myStrArray)
+fprint $fileId ($line+"\n") ;
+
+// Close File
+fclose $fileId ;
+}
+
+global proc ReadMocapSettings()
+{
+$filename = (`internalVar -usd` + "Mocap_Transfer_Settings.txt");
+$fileId=`fopen $filename "r"`;
+string $nextLine = `fgetline $fileId`;
+while ( size( $nextLine ) > 0 ) {
+    print ( $nextLine );
+    eval ($nextLine);
+    $nextLine = `fgetline $fileId`;
+}
+fclose $fileId;
+// To make sure the action button matches the mocap type
+optionMenuChanged;
+
+}
+
+global proc LaunchTutorial()
+{
+launch -web "https://youtu.be/lV4ZSAaruEc?t=1";
+}
+
+
+global proc TPoseMixamo()
+{
+    // Change the current time unit to ntsc
+ currentUnit -linear "ft";
+ currentUnit -time ntsc;
+ playbackOptions -ps 1;
+    currentTime -edit -20;
+// Big dumb ham-fisted way of resetting all rotations. Should be its own sub-routine but waddaya gonna do?
+catch (`setAttr "mixamorig:RightToe_End.rotateZ" 0`);
+catch (`setAttr "mixamorig:RightToe_End.rotateY" 0`);
+catch (`setAttr "mixamorig:RightToe_End.rotateX" 0`);
+catch (`setAttr "mixamorig:RightToeBase.rotateZ" 7.140304206e-07`);
+catch (`setAttr "mixamorig:RightToeBase.rotateY" 1.094187792e-05`);
+catch (`setAttr "mixamorig:RightToeBase.rotateX" 1.363861247e-05`);
+catch (`setAttr "mixamorig:RightFoot.rotateZ" -4.362071037`);
+catch (`setAttr "mixamorig:RightFoot.rotateY" -6.223992825`);
+catch (`setAttr "mixamorig:RightFoot.rotateX" 5.972018719`);
+catch (`setAttr "mixamorig:RightLeg.rotateZ" 0.04587552324`);
+catch (`setAttr "mixamorig:RightLeg.rotateY" -0.06679700315`);
+catch (`setAttr "mixamorig:RightLeg.rotateX" -4.082337379`);
+catch (`setAttr "mixamorig:RightUpLeg.rotateZ" 9.429965019`);
+catch (`setAttr "mixamorig:RightUpLeg.rotateY" -0.6183119416`);
+catch (`setAttr "mixamorig:RightUpLeg.rotateX" 2.972338438`);
+catch (`setAttr "mixamorig:LeftToe_End.rotateZ" 0`);
+catch (`setAttr "mixamorig:LeftToe_End.rotateY" 0`);
+catch (`setAttr "mixamorig:LeftToe_End.rotateX" 0`);
+catch (`setAttr "mixamorig:LeftToeBase.rotateZ" 1.762204647e-06`);
+catch (`setAttr "mixamorig:LeftToeBase.rotateY" -8.456911019e-06`);
+catch (`setAttr "mixamorig:LeftToeBase.rotateX" 1.290008095e-05`);
+catch (`setAttr "mixamorig:LeftFoot.rotateZ" 4.391114712`);
+catch (`setAttr "mixamorig:LeftFoot.rotateY" 5.898302078`);
+catch (`setAttr "mixamorig:LeftFoot.rotateX" 6.288897514`);
+catch (`setAttr "mixamorig:LeftLeg.rotateZ" -0.03816247731`);
+catch (`setAttr "mixamorig:LeftLeg.rotateY" 0.05645744503`);
+catch (`setAttr "mixamorig:LeftLeg.rotateX" -3.730342865`);
+catch (`setAttr "mixamorig:LeftUpLeg.rotateZ" -9.375673294`);
+catch (`setAttr "mixamorig:LeftUpLeg.rotateY" 0.5599402785`);
+catch (`setAttr "mixamorig:LeftUpLeg.rotateX" 2.539195538`);
+catch (`setAttr "mixamorig:RightHandMiddle4.rotateZ" 0`);
+catch (`setAttr "mixamorig:RightHandMiddle4.rotateY" 0`);
+catch (`setAttr "mixamorig:RightHandMiddle4.rotateX" 0`);
+catch (`setAttr "mixamorig:RightHandMiddle3.rotateZ" -2.094954729`);
+catch (`setAttr "mixamorig:RightHandMiddle3.rotateY" 0.1335560977`);
+catch (`setAttr "mixamorig:RightHandMiddle3.rotateX" 12.01002407`);
+catch (`setAttr "mixamorig:RightHandMiddle2.rotateZ" 4.246051311`);
+catch (`setAttr "mixamorig:RightHandMiddle2.rotateY" 2.190236092`);
+catch (`setAttr "mixamorig:RightHandMiddle2.rotateX" -26.65922928`);
+catch (`setAttr "mixamorig:RightHandMiddle1.rotateZ" -0.4930782318`);
+catch (`setAttr "mixamorig:RightHandMiddle1.rotateY" -1.600875735`);
+catch (`setAttr "mixamorig:RightHandMiddle1.rotateX" -35.04765701`);
+catch (`setAttr "mixamorig:RightHandIndex4.rotateZ" 0`);
+catch (`setAttr "mixamorig:RightHandIndex4.rotateY" 0`);
+catch (`setAttr "mixamorig:RightHandIndex4.rotateX" 0`);
+catch (`setAttr "mixamorig:RightHandIndex3.rotateZ" 0.1120142937`);
+catch (`setAttr "mixamorig:RightHandIndex3.rotateY" 0.08929090202`);
+catch (`setAttr "mixamorig:RightHandIndex3.rotateX" -4.302299976`);
+catch (`setAttr "mixamorig:RightHandIndex2.rotateZ" 2.61721158`);
+catch (`setAttr "mixamorig:RightHandIndex2.rotateY" 0.4553163946`);
+catch (`setAttr "mixamorig:RightHandIndex2.rotateX" -11.19036674`);
+catch (`setAttr "mixamorig:RightHandIndex1.rotateZ" 5.210390568`);
+catch (`setAttr "mixamorig:RightHandIndex1.rotateY" 0.4827248156`);
+catch (`setAttr "mixamorig:RightHandIndex1.rotateX" -28.12730026`);
+catch (`setAttr "mixamorig:RightHandThumb4.rotateZ" 0`);
+catch (`setAttr "mixamorig:RightHandThumb4.rotateY" 0`);
+catch (`setAttr "mixamorig:RightHandThumb4.rotateX" 0`);
+catch (`setAttr "mixamorig:RightHandThumb3.rotateZ" -11.72810268`);
+catch (`setAttr "mixamorig:RightHandThumb3.rotateY" 9.88634491`);
+catch (`setAttr "mixamorig:RightHandThumb3.rotateX" 23.78046036`);
+catch (`setAttr "mixamorig:RightHandThumb2.rotateZ" -16.13720131`);
+catch (`setAttr "mixamorig:RightHandThumb2.rotateY" -1.412287951`);
+catch (`setAttr "mixamorig:RightHandThumb2.rotateX" -8.171240807`);
+catch (`setAttr "mixamorig:RightHandThumb1.rotateZ" 11.65544415`);
+catch (`setAttr "mixamorig:RightHandThumb1.rotateY" -3.553967476`);
+catch (`setAttr "mixamorig:RightHandThumb1.rotateX" 9.600516319`);
+catch (`setAttr "mixamorig:RightHand.rotateZ" -10.30259514`);
+catch (`setAttr "mixamorig:RightHand.rotateY" 35.12511444`);
+catch (`setAttr "mixamorig:RightHand.rotateX" -2.963922262`);
+catch (`setAttr "mixamorig:RightForeArm.rotateZ" 5.886729717`);
+catch (`setAttr "mixamorig:RightForeArm.rotateY" 1.016385198`);
+catch (`setAttr "mixamorig:RightForeArm.rotateX" -19.57540894`);
+catch (`setAttr "mixamorig:RightArm.rotateZ" 0.02145746909`);
+catch (`setAttr "mixamorig:RightArm.rotateY" -1.843343735`);
+catch (`setAttr "mixamorig:RightArm.rotateX" -49.64035416`);
+catch (`setAttr "mixamorig:RightShoulder.rotateZ" -1.008219719`);
+catch (`setAttr "mixamorig:RightShoulder.rotateY" -0.0814113915`);
+catch (`setAttr "mixamorig:RightShoulder.rotateX" -14.5866909`);
+catch (`setAttr "mixamorig:LeftHandMiddle4.rotateZ" 0`);
+catch (`setAttr "mixamorig:LeftHandMiddle4.rotateY" 0`);
+catch (`setAttr "mixamorig:LeftHandMiddle4.rotateX" 0`);
+catch (`setAttr "mixamorig:LeftHandMiddle3.rotateZ" 2.152366161`);
+catch (`setAttr "mixamorig:LeftHandMiddle3.rotateY" -0.103931509`);
+catch (`setAttr "mixamorig:LeftHandMiddle3.rotateX" 8.609460831`);
+catch (`setAttr "mixamorig:LeftHandMiddle2.rotateZ" -4.944467545`);
+catch (`setAttr "mixamorig:LeftHandMiddle2.rotateY" -1.550793171`);
+catch (`setAttr "mixamorig:LeftHandMiddle2.rotateX" -17.58133507`);
+catch (`setAttr "mixamorig:LeftHandMiddle1.rotateZ" -3.9649508`);
+catch (`setAttr "mixamorig:LeftHandMiddle1.rotateY" 0.4699535072`);
+catch (`setAttr "mixamorig:LeftHandMiddle1.rotateX" -38.68388367`);
+catch (`setAttr "mixamorig:LeftHandIndex4.rotateZ" 0`);
+catch (`setAttr "mixamorig:LeftHandIndex4.rotateY" 0`);
+catch (`setAttr "mixamorig:LeftHandIndex4.rotateX" 0`);
+catch (`setAttr "mixamorig:LeftHandIndex3.rotateZ" 5.27436924`);
+catch (`setAttr "mixamorig:LeftHandIndex3.rotateY" -0.8730127811`);
+catch (`setAttr "mixamorig:LeftHandIndex3.rotateX" 10.48058414`);
+catch (`setAttr "mixamorig:LeftHandIndex2.rotateZ" -4.543492317`);
+catch (`setAttr "mixamorig:LeftHandIndex2.rotateY" -1.516837835`);
+catch (`setAttr "mixamorig:LeftHandIndex2.rotateX" -15.64050961`);
+catch (`setAttr "mixamorig:LeftHandIndex1.rotateZ" -7.854667187`);
+catch (`setAttr "mixamorig:LeftHandIndex1.rotateY" -1.146149993`);
+catch (`setAttr "mixamorig:LeftHandIndex1.rotateX" -27.09493065`);
+catch (`setAttr "mixamorig:LeftHandThumb4.rotateZ" 0`);
+catch (`setAttr "mixamorig:LeftHandThumb4.rotateY" 0`);
+catch (`setAttr "mixamorig:LeftHandThumb4.rotateX" 0`);
+catch (`setAttr "mixamorig:LeftHandThumb3.rotateZ" 13.70772457`);
+catch (`setAttr "mixamorig:LeftHandThumb3.rotateY" -7.772568703`);
+catch (`setAttr "mixamorig:LeftHandThumb3.rotateX" 17.91858864`);
+catch (`setAttr "mixamorig:LeftHandThumb2.rotateZ" 14.9580555`);
+catch (`setAttr "mixamorig:LeftHandThumb2.rotateY" 1.504180789`);
+catch (`setAttr "mixamorig:LeftHandThumb2.rotateX" -10.04827499`);
+catch (`setAttr "mixamorig:LeftHandThumb1.rotateZ" -14.2476368`);
+catch (`setAttr "mixamorig:LeftHandThumb1.rotateY" 4.462972164`);
+catch (`setAttr "mixamorig:LeftHandThumb1.rotateX" 11.53514767`);
+catch (`setAttr "mixamorig:LeftHand.rotateZ" 11.35561371`);
+catch (`setAttr "mixamorig:LeftHand.rotateY" -40.09350204`);
+catch (`setAttr "mixamorig:LeftHand.rotateX" -3.393939495`);
+catch (`setAttr "mixamorig:LeftForeArm.rotateZ" 7.705957413`);
+catch (`setAttr "mixamorig:LeftForeArm.rotateY" 1.181599855`);
+catch (`setAttr "mixamorig:LeftForeArm.rotateX" -17.409935`);
+catch (`setAttr "mixamorig:LeftArm.rotateZ" 7.49452877`);
+catch (`setAttr "mixamorig:LeftArm.rotateY" 9.0346632`);
+catch (`setAttr "mixamorig:LeftArm.rotateX" -48.77939987`);
+catch (`setAttr "mixamorig:LeftShoulder.rotateZ" 1.880566359`);
+catch (`setAttr "mixamorig:LeftShoulder.rotateY" -1.67261076`);
+catch (`setAttr "mixamorig:LeftShoulder.rotateX" -14.42945385`);
+catch (`setAttr "mixamorig:HeadTop_End.rotateZ" 0`);
+catch (`setAttr "mixamorig:HeadTop_End.rotateY" -0`);
+catch (`setAttr "mixamorig:HeadTop_End.rotateX" 1.252186882e-15`);
+catch (`setAttr "mixamorig:Head.rotateZ" 0`);
+catch (`setAttr "mixamorig:Head.rotateY" -0`);
+catch (`setAttr "mixamorig:Head.rotateX" 1.252186882e-15`);
+catch (`setAttr "mixamorig:Neck.rotateZ" -2.605510772e-11`);
+catch (`setAttr "mixamorig:Neck.rotateY" -4.88537379e-12`);
+catch (`setAttr "mixamorig:Neck.rotateX" -2.701713697e-07`);
+catch (`setAttr "mixamorig:Spine2.rotateZ" 0`);
+catch (`setAttr "mixamorig:Spine2.rotateY" -0`);
+catch (`setAttr "mixamorig:Spine2.rotateX" 7.951386872e-16`);
+catch (`setAttr "mixamorig:Spine1.rotateZ" 0`);
+catch (`setAttr "mixamorig:Spine1.rotateY" -0`);
+catch (`setAttr "mixamorig:Spine1.rotateX" 9.355506644e-16`);
+catch (`setAttr "mixamorig:Spine.rotateZ" 0.03175831586`);
+catch (`setAttr "mixamorig:Spine.rotateY" -0.002933621174`);
+catch (`setAttr "mixamorig:Spine.rotateX" 0.0001012224238`);
+catch (`setAttr "mixamorig:Hips.rotateZ" -0.031878829`);
+catch (`setAttr "mixamorig:Hips.rotateY" 0.0009680956719`);
+catch (`setAttr "mixamorig:Hips.rotateX" -0.0001021587013`);
+
+print "I RESET ALL YOUR BASE";
+namespace -mergeNamespaceWithRoot -removeNamespace "mixamorig";
+select -r Hips ;
+
+select -hi;
+
+
+string $array[] = `ls -sl`;
+for ($item in $array)
+{
+/*	setAttr ($item + ".rotateX") 0.0;
+	setAttr ($item + ".rotateY") 0.0;
+	setAttr ($item + ".rotateZ") 0.0;
+*/	
+	setKeyframe -t -20sec -at rotateX;
+	setKeyframe -t -20sec -at rotateY;
+	setKeyframe -t -20sec -at rotateZ;
+}
+
+select -cl  ;
+select -r Hips ;
+setAttr "Hips.translateX" 0;
+setAttr "Hips.translateZ" 0;
+setAttr "Hips.translateY" 3.4;
+setKeyframe -breakdown 0 -hierarchy below -controlPoints 0 -shape 0 {"Hips"};
+
+/// Last step in sorting Mixamo is to make it 'stand' on the default Maya 3d modeling window grid.
+select -cl  ;
+}
+
+// This is a separate script I wrote that I cut/pasted here to make this script more independent
+
+global proc TimeLineShift()
+{
+
+	string $objList[] = `ls -selection`;
+        $count = `size ($objList)`;
+
+	if( $count != 1 ) {
+				confirmDialog -m "Need to select a joint or transform" -b "Roger that";
+				return;
+			   }
+	if( nodeType( $objList[0] ) != "transform" &&  nodeType( $objList[0] ) != "joint" ) {
+				confirmDialog -m "Select objects with transform node or joints" -b "Select transform or joint";
+				return;
+			   }
+else
+{
+string $sel[] = `ls -sl`;
+string $allDecendants[] = `listRelatives -f -ad $sel`;
+string $allObjects[] = stringArrayCatenate($sel, $allDecendants);
+float $lastKey = -98989898989;
+for ($c in $allObjects)
+{
+	string $allAttrs[] = `listAnimatable $c`;
+	for ($attr in $allAttrs)
+	{
+		float $keyLst[] = `keyframe -q -tc $attr`;
+		if (size($keyLst) > 0)
+		{	
+			if ($keyLst[(size($keyLst))-1] > $lastKey)
+				$lastKey = $keyLst[(size($keyLst))-1];
+		}
+	}
+}
+
+playbackOptions -min 1 -ast 1;
+playbackOptions -aet $lastKey -max $lastKey;
+
+print ("last keyframe is " + $lastKey);
+}
+}
+
+
+
+Mocap_Scriptcheck;
